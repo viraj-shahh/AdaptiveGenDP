@@ -60,12 +60,12 @@ Run from `absw/`:
 
 | Command | Does |
 |---|---|
+| `make absw` | Synthesizes the Smith-Waterman array in ASAP7 with Cadence Genus. Downloads the ASAP7 libraries on first run. Options: `W=16 MAXLEN=128 CLK_PS=1000 VT=RVT CORNER=TT` |
+| `make sim` | RTL vs golden model at W = 8, 16, 32. Use `SIM=vcs` on CAEN if Verilator isn't there |
 | `make golden` | Golden-model selftest plus the static vs adaptive comparison on long reads |
 | `make baseline` | Builds the GenDP simulator and BWA `ksw-test` and checks them against each other |
-| `make sim` | RTL vs golden model at W = 8, 16, 32. Use `SIM=vcs` on CAEN if Verilator isn't there |
-| `make asap7` | Downloads the ASAP7 liberty and LEF files (sparse checkout of OpenROAD-flow-scripts, no build) |
-| `make synth` | Cadence Genus synthesis in ASAP7. Options: `W=16 MAXLEN=128 CLK_PS=1000 VT=RVT CORNER=TT` |
 | `make orfs ORFS=<path>` | Full RTL-to-GDSII with OpenROAD-flow-scripts, if you have it installed |
+| `make libs` | Re-fetches only the ASAP7 liberty and LEF files |
 
 Results land in `flow/genus/W16_L128_1000ps_RVT_TT/reports/`: area, timing, power, gates, QoR.
 To find the maximum clock, lower `CLK_PS` until the slack in `timing.rpt` goes negative.
@@ -75,21 +75,20 @@ To find the maximum clock, lower `CLK_PS` until the slack in `timing.rpt` goes n
 ```
 git clone -b adaptive-dp https://github.com/viraj-shahh/AdaptiveGenDP.git && cd AdaptiveGenDP/absw
 module avail 2>&1 | grep -i -E "genus|vcs|verilator"   # find the module names, then module load them
-make asap7
-make synth
+make absw
 ```
 
 ### Not yet verified
 
-- `genus.tcl`, `SIM=vcs`, and `make orfs` haven't been run, because no Cadence, VCS, or OpenROAD
+- `make absw` (Genus), `SIM=vcs`, and `make orfs` haven't been run, because no Cadence, VCS, or OpenROAD
   is available on the Mac. Expect small fixes on the first CAEN run.
-- `make asap7`, `make sim` (Verilator), `make golden`, and `make baseline` are tested.
+- The library download in `make absw`, `make sim` (Verilator), `make golden`, and `make baseline` are tested.
 - ASAP7 libraries checked: units are ps / fF / pW, and INVx1 area is 0.044 um², so these are real
   1x areas.
 - The RTL uses synchronous reset, because ASAP7's only async-reset flop is a single-size set/reset
   cell that would inflate area.
 - GDSII still needs place-and-route: either `make orfs`, or an Innovus script, which can be written
-  once synthesis runs.
+  once `make absw` runs.
 
 ## Gotchas found so far
 

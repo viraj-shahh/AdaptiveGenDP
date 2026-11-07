@@ -1,14 +1,15 @@
 # Adaptive banded Smith-Waterman: one entry point for everything in absw/.
 #
+#   make absw       synthesize the Smith-Waterman array in ASAP7 with Cadence Genus
+#                   (fetches the ASAP7 libraries on first run) -> flow/genus/<run>/reports
+#   make sim        RTL vs golden model (Verilator by default; SIM=vcs on CAEN)
 #   make golden     Python golden model: selftest + band-policy comparison
 #   make baseline   build GenDP simulator + BWA ksw-test, check them against each other
-#   make sim        RTL vs golden model (Verilator by default; SIM=vcs on CAEN)
-#   make asap7      fetch the ASAP7 standard-cell libraries (liberty + LEF)
-#   make synth      Cadence Genus synthesis in ASAP7 -> flow/genus/<run>/reports
 #   make orfs       full RTL-to-GDSII with OpenROAD-flow-scripts (needs ORFS=<path>)
+#   make libs       re-fetch the ASAP7 standard-cell libraries only
 #   make clean
 #
-# Knobs:  W=16  MAXLEN=128  CLK_PS=1000  CORNER=TT  VT=RVT   (synth)
+# Knobs:  W=16  MAXLEN=128  CLK_PS=1000  CORNER=TT  VT=RVT   (absw)
 #         SIM=verilator|vcs  SIM_WS="8 16 32"                    (sim)
 
 W       ?= 16
@@ -32,7 +33,7 @@ LIBS = asap7sc7p5t_AO_$(VT)_$(CORNER)_nldm_211120.lib \
        asap7sc7p5t_SIMPLE_$(VT)_$(CORNER)_nldm_211120.lib \
        asap7sc7p5t_SEQ_$(VT)_$(CORNER)_nldm_220123.lib
 
-.PHONY: golden baseline sim asap7 synth orfs clean
+.PHONY: absw sim golden baseline orfs libs clean
 
 golden:
 	$(PYTHON) golden.py selftest
@@ -47,7 +48,9 @@ sim:
 	SIM=$(SIM) WS="$(SIM_WS)" bash rtl/run_tests.sh
 
 # Sparse checkout: only the ASAP7 liberty and LEF folders of ORFS (~100 MB), no build.
-asap7: $(ASAP7_LIB)/.done
+libs:
+	rm -f $(ASAP7_LIB)/.done
+	$(MAKE) $(ASAP7_LIB)/.done
 $(ASAP7_LIB)/.done:
 	rm -rf $(ASAP7_SRC) && mkdir -p $(ASAP7_LIB)
 	git clone --depth 1 --filter=blob:none --sparse \
@@ -61,7 +64,7 @@ $(ASAP7_LIB)/.done:
 	   $(ASAP7_SRC)/flow/platforms/asap7/lef/asap7sc7p5t_28_*_1x_220121a.lef $(ASAP7_LIB)/
 	touch $@
 
-synth: $(ASAP7_LIB)/.done
+absw: $(ASAP7_LIB)/.done
 	mkdir -p $(GENUS_DIR)
 	cd $(GENUS_DIR) && \
 	ABSW_RTL="$(CURDIR)/rtl" ABSW_LIBDIR="$(CURDIR)/$(ASAP7_LIB)" ABSW_LIBS="$(LIBS)" \
