@@ -37,6 +37,60 @@ Run everything: `bash absw/run_all.sh` (about 1 minute).
 - `static` and `adaptive` use the same W-PE array. The only new hardware is the per-anti-diagonal
   compare of the two end scores and the 1-bit shift that follows.
 
+## RTL (`rtl/`)
+
+`absw_array.sv` is a W-PE anti-diagonal array that computes one anti-diagonal per cycle, plus a
+band-steering unit. The `adaptive` input picks adaptive or static (alternating) steering, so one
+design gives both sides of the comparison. Each PE talks only to its neighbours. The query enters
+at PE 0 and the reference at PE W-1, and each shifts only on its own kind of move.
+
+- `bash absw/rtl/run_tests.sh` builds with Verilator and checks every case against `golden.py`
+  for W = 16, 8, 32: score, gscore, best-cell position, and the exact cycle count
+  (W + tlen + qlen).
+- Status: 258/258 tests pass at each W. Three deliberately broken RTL variants (flipped steering
+  compare, wrong diagonal mux, wrong gap-open penalty) each failed 52-112 of the 178 tests in an
+  earlier, smaller vector set.
+- In these 256-base tests, adaptive never scores below static. It scores higher in 21/129 cases
+  at W=8 and 6/129 at W=16.
+- Verilator is in the conda env `hw` (Homebrew here is the Intel build and doesn't work).
+
+## Makefile
+
+Run from `absw/`:
+
+| Command | Does |
+|---|---|
+| `make golden` | Golden-model selftest plus the static vs adaptive comparison on long reads |
+| `make baseline` | Builds the GenDP simulator and BWA `ksw-test` and checks them against each other |
+| `make sim` | RTL vs golden model at W = 8, 16, 32. Use `SIM=vcs` on CAEN if Verilator isn't there |
+| `make asap7` | Downloads the ASAP7 liberty and LEF files (sparse checkout of OpenROAD-flow-scripts, no build) |
+| `make synth` | Cadence Genus synthesis in ASAP7. Options: `W=16 MAXLEN=128 CLK_PS=1000 VT=RVT CORNER=TT` |
+| `make orfs ORFS=<path>` | Full RTL-to-GDSII with OpenROAD-flow-scripts, if you have it installed |
+
+Results land in `flow/genus/W16_L128_1000ps_RVT_TT/reports/`: area, timing, power, gates, QoR.
+To find the maximum clock, lower `CLK_PS` until the slack in `timing.rpt` goes negative.
+
+### On CAEN
+
+```
+git clone -b adaptive-dp https://github.com/viraj-shahh/AdaptiveGenDP.git && cd AdaptiveGenDP/absw
+module avail 2>&1 | grep -i -E "genus|vcs|verilator"   # find the module names, then module load them
+make asap7
+make synth
+```
+
+### Not yet verified
+
+- `genus.tcl`, `SIM=vcs`, and `make orfs` haven't been run, because no Cadence, VCS, or OpenROAD
+  is available on the Mac. Expect small fixes on the first CAEN run.
+- `make asap7`, `make sim` (Verilator), `make golden`, and `make baseline` are tested.
+- ASAP7 libraries checked: units are ps / fF / pW, and INVx1 area is 0.044 um², so these are real
+  1x areas.
+- The RTL uses synchronous reset, because ASAP7's only async-reset flop is a single-size set/reset
+  cell that would inflate area.
+- GDSII still needs place-and-route: either `make orfs`, or an Innovus script, which can be written
+  once synthesis runs.
+
 ## Gotchas found so far
 
 - GenDP BSW runs in 8-bit lanes and saturates at 127. Inputs with `h0 + qlen > 127` mismatch
