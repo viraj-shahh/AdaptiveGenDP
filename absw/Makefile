@@ -3,7 +3,7 @@
 #   make absw       synthesize the Smith-Waterman array in ASAP7 with Cadence Genus
 #                   (fetches the ASAP7 libraries on first run) -> flow/genus/<run>/reports
 #   make sim        RTL vs golden model (Verilator by default; SIM=vcs on CAEN)
-#   make golden     Python golden model: selftest + band-policy comparison
+#   make golden     C++ golden model (golden/): selftest + band-policy comparison
 #   make baseline   build GenDP simulator + BWA ksw-test, check them against each other
 #   make orfs       full RTL-to-GDSII with OpenROAD-flow-scripts (needs ORFS=<path>)
 #   make libs       re-fetch the ASAP7 standard-cell libraries only
@@ -18,7 +18,6 @@ CLK_PS  ?= 1000
 SIM     ?= verilator
 CORNER  ?= TT
 VT      ?= RVT
-PYTHON  ?= python3
 SIM_WS  ?= 8 16 32
 
 ASAP7_SRC := flow/.asap7_src
@@ -35,11 +34,17 @@ LIBS = asap7sc7p5t_AO_$(VT)_$(CORNER)_nldm_211120.lib \
 
 .PHONY: absw sim golden baseline orfs libs clean
 
-golden:
-	$(PYTHON) golden.py selftest
-	$(PYTHON) gen_pairs.py -n 60 --qlen 1000 --tlen-extra 200 --sub-rate 0.04 --indel-rate 0.06 \
+GOLDEN := build/golden
+$(GOLDEN): golden/golden.cpp golden/absw_golden.hpp
+	mkdir -p build
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -o $@ golden/golden.cpp
+
+golden: $(GOLDEN)
+	mkdir -p data
+	$(GOLDEN) selftest
+	$(GOLDEN) pairs -n 60 --qlen 1000 --tlen-extra 200 --sub-rate 0.04 --indel-rate 0.06 \
 	    --max-indel 2 --del-frac 0.65 --h0 30 --max-len 0 --seed 4 --tsv data/long_drift.tsv
-	$(PYTHON) golden.py compare data/long_drift.tsv -W 8 16 32
+	$(GOLDEN) compare data/long_drift.tsv -W 8 16 32
 
 baseline:
 	bash run_all.sh
@@ -79,4 +84,4 @@ orfs:
 	$(MAKE) -C $(ORFS)/flow DESIGN_CONFIG="$(CURDIR)/flow/asap7/config.mk"
 
 clean:
-	rm -rf rtl/build flow/genus/W* data
+	rm -rf build rtl/build flow/genus/W* data

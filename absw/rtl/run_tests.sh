@@ -1,6 +1,6 @@
 #!/bin/bash
-# Build absw_array and check it against golden.py for several band widths.
-# Needs python3 with numpy, plus a simulator:
+# Build absw_array and check it against the C++ golden model for several band widths.
+# Needs a C++17 compiler, plus a simulator:
 #   SIM=verilator (default; found on PATH or in the conda env "hw")
 #   SIM=vcs       (Synopsys VCS, e.g. on CAEN)
 # WS="16 8 32" picks the band widths, MAXLEN the on-chip sequence buffer size.
@@ -14,8 +14,11 @@ MAXLEN=${MAXLEN:-256}
 # GNU make can't build in a path with spaces ("EECS 570"), so compile outside the repo.
 OBJ=${OBJ:-"${TMPDIR:-/tmp}/absw_rtl_obj"}
 mkdir -p build "$OBJ"
+GOLDEN=../build/golden
+mkdir -p ../build
+c++ -std=c++17 -O2 -Wall -o "$GOLDEN" ../golden/golden.cpp
 for W in ${WS:-16 8 32}; do
-    python3 gen_vectors.py -W "$W" --maxlen "$MAXLEN" -o "build/vec_w$W.txt"
+    "$GOLDEN" vectors -W "$W" --maxlen "$MAXLEN" -o "build/vec_w$W.txt"
     mkdir -p "$OBJ/w$W"
     if [ "$SIM" = vcs ]; then
         vcs -full64 -sverilog -timescale=1ns/1ps +lint=none \

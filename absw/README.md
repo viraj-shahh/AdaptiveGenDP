@@ -10,15 +10,22 @@ Run everything: `bash absw/run_all.sh` (about 1 minute).
 
 | File | What it is |
 |---|---|
-| `gen_pairs.py` | Synthetic read/reference pairs in GenDP-sim, ksw-test, and TSV formats |
-| `golden.py` | Golden model: exact port of `ksw_extend2`, plus an anti-diagonal engine with `full`, `rowband`, `static`, `adaptive` band policies |
+| `golden/absw_golden.hpp` | **The golden model (C++17).** An exact port of `ksw_extend2`, plus an anti-diagonal engine with `full`, `rowband`, `static`, `adaptive` band policies. Bit-exact with the RTL |
+| `golden/golden.cpp` | Command-line tool: `selftest`, `validate`, `compare`, `run`, `pairs` (synthetic data), `vectors` (RTL tests). Built by `make golden` into `build/golden` |
 | `run_all.sh` | Builds the simulator and ksw-test, runs all checks and comparisons |
 | `compat/` | Empty `emmintrin.h` and stub `omp.h` so `ksw-test` builds on Apple Silicon (no source edits) |
+| `golden.py`, `gen_pairs.py`, `rtl/gen_vectors.py` | The original Python model. No longer used by any flow; kept as an independent cross-check |
+
+The C++ model replaced the Python one after being shown identical to it: 7488/7488 pair-runs
+match on score, gscore, best-cell position, and cell count (4 datasets x 4 policies x W in
+{4,8,16,32}), and the `compare` tables match character for character. It is about 90x faster
+(0.55 s vs 50 s for the long-read comparison). Its random generator is a fixed splitmix64, so
+`pairs` and `vectors` produce the same data on macOS (clang) and Linux (gcc).
 
 ## What is verified
 
 - GenDP BSW simulator vs ksw-test: 256/256 pairs match (score and gscore).
-- `ksw_extend2_port` vs ksw-test: 256/256 identical on all 6 output fields.
+- C++ `ksw_extend2` port vs ksw-test: 256/256 identical on all 6 output fields.
 - Anti-diagonal engine (`rowband`) vs the port with z-drop and pruning off: 768/768 identical.
 
 ## First results (synthetic data, not yet real reads)
@@ -28,8 +35,10 @@ Run everything: `bash absw/run_all.sh` (about 1 minute).
 | Workload | static W=16 | adaptive W=16 | static W=32 |
 |---|---|---|---|
 | 100bp, 2% sub, 1% indel (GenDP's BSW regime) | 100% | 100% | 100% |
-| 1kb, 4% sub, 6% indel, 65% deletions (drift) | 15% | 100% | 60% |
+| 1kb, 4% sub, 6% indel, 65% deletions (drift) | 8.3% | 100% | 53.3% |
 
+- These are the numbers `make golden` prints. The earlier Python-generated dataset with the same
+  settings gave 15% / 100% / 60%; same conclusion, different random draw.
 - Adaptive bands don't matter for short reads; they matter for long reads, where small indels
   add up to drift.
 - Adaptive bands do **not** recover a single gap wider than the band. Until the new diagonal is
@@ -44,14 +53,14 @@ band-steering unit. The `adaptive` input picks adaptive or static (alternating) 
 design gives both sides of the comparison. Each PE talks only to its neighbours. The query enters
 at PE 0 and the reference at PE W-1, and each shifts only on its own kind of move.
 
-- `bash absw/rtl/run_tests.sh` builds with Verilator and checks every case against `golden.py`
-  for W = 16, 8, 32: score, gscore, best-cell position, and the exact cycle count
+- `bash absw/rtl/run_tests.sh` (or `make sim`) builds with Verilator and checks every case
+  against the C++ golden model for W = 16, 8, 32: score, gscore, best-cell position, and the exact cycle count
   (W + tlen + qlen).
 - Status: 258/258 tests pass at each W. Three deliberately broken RTL variants (flipped steering
   compare, wrong diagonal mux, wrong gap-open penalty) each failed 52-112 of the 178 tests in an
   earlier, smaller vector set.
-- In these 256-base tests, adaptive never scores below static. It scores higher in 21/129 cases
-  at W=8 and 6/129 at W=16.
+- In these 256-base tests, adaptive never scores below static. It scores higher in 30/129 cases
+  at W=8 and 4/129 at W=16.
 - Verilator is in the conda env `hw` (Homebrew here is the Intel build and doesn't work).
 
 ## Makefile
@@ -98,12 +107,10 @@ make absw
   model of BSW computes the full table for these reads, not a narrow band.
 - The repo only implements BSW, PairHMM, POA, and Chain. DTW and Bellman-Ford appear in the paper
   but not in the code.
-- Verilator, Icarus, and Yosys are not installed on this machine yet.
 
 ## Next
 
-1. Add real long reads from GenDP's own dataset (`gendp-datasets.tar.gz`, POA input: ONT reads)
+1. `make absw` on CAEN: clock, area, power.
+2. Place and route to GDSII.
+3. Add real long reads from GenDP's own dataset (`gendp-datasets.tar.gz`, POA input: ONT reads)
    alongside the synthetic pairs.
-2. Add adaptive BSW as kernel 5 in the GenDP simulator (band-shift decision at the array level),
-   to get cycle counts.
-3. RTL: a W-PE anti-diagonal array plus the band-steering unit, checked against `golden.py`.
