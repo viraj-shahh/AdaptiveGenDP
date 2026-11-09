@@ -27,6 +27,10 @@ match on score, gscore, best-cell position, and cell count (4 datasets x 4 polic
 - GenDP BSW simulator vs ksw-test: 256/256 pairs match (score and gscore).
 - C++ `ksw_extend2` port vs ksw-test: 256/256 identical on all 6 output fields.
 - Anti-diagonal engine (`rowband`) vs the port with z-drop and pruning off: 768/768 identical.
+- The engine keeps only three anti-diagonals (O(length) memory: 3.3 MB at 10 kb, down from
+  1.9 GB for the earlier full-table version, and ~3x faster). Checked against the full-table
+  version: 66,000 random runs (all policies, W from 1 to 33, empty to 400 bp, h0 from 0 to 100)
+  plus 1/5/10 kb pairs match on score, gscore, best cell, cell count, and every band move.
 
 ## First results (synthetic data, not yet real reads)
 
@@ -39,6 +43,15 @@ match on score, gscore, best-cell position, and cell count (4 datasets x 4 polic
 
 - These are the numbers `make golden` prints. The earlier Python-generated dataset with the same
   settings gave 15% / 100% / 60%; same conclusion, different random draw.
+- Longer segments widen the gap (synthetic, 5% sub, 5% indel, unbiased indels, 30 pairs each):
+
+  | Segment | static W=16 | adaptive W=16 | static W=32 |
+  |---|---|---|---|
+  | 1 kb | 70.0% | 100% | 100% |
+  | 2 kb | 53.3% | 100% | 93.3% |
+  | 5 kb | 13.3% | 100% | 66.7% |
+  | 10 kb | 0.0% | 100% | 43.3% |
+
 - Adaptive bands don't matter for short reads; they matter for long reads, where small indels
   add up to drift.
 - Adaptive bands do **not** recover a single gap wider than the band. Until the new diagonal is

@@ -198,24 +198,48 @@ struct ExtendResult {
 
 inline int floor_div(int a, int b) { return a / b - ((a % b != 0) && ((a < 0) != (b < 0))); }
 
+// One anti-diagonal (d = i + j) of H, E, F, M, indexed by i.  Entries never written
+// are 0, which is what out-of-band cells read as.  Only the written entries are
+// cleared on reuse, so a step costs O(band), not O(length).
+struct Diag {
+    std::vector<int> H, E, F, M;
+    int a = 1, b = 0;          // band cells written: i in [a, b]
+    int bd[2] = {-1, -1};      // boundary entries written (row 0 / column 0)
+    explicit Diag(int n) : H(n, 0), E(n, 0), F(n, 0), M(n, 0) {}
+    void clear() {
+        for (int i = a; i <= b; ++i) H[i] = E[i] = F[i] = M[i] = 0;
+        for (int &k : bd) if (k >= 0) { H[k] = 0; k = -1; }
+        a = 1; b = 0;
+    }
+    // Boundary cells on diagonal d: (0, d) and (d, 0), from the h0-derived row/column.
+    void set_boundary(int d, int h0, int qlen, int tlen, const Scoring &s) {
+        if (d == 0) { H[0] = h0; bd[0] = 0; return; }
+        if (d <= qlen) { H[0] = std::max(0, h0 - s.o_ins - s.e_ins * d); bd[0] = 0; }
+        if (d <= tlen) { H[d] = std::max(0, h0 - s.o_del - s.e_del * d); bd[1] = d; }
+    }
+};
+
 // W: PEs (cells per anti-diagonal) for Static/Adaptive.  w: half-width for RowBand
 // (defaults to W - 1, the same cell budget as W cells per anti-diagonal).
+// Memory is O(tlen): only the current and two previous anti-diagonals are kept, so
+// 10 kb+ segments are fine.  Time is O(cells computed).
 inline ExtendResult extend(const Seq &q, const Seq &t, int h0, Policy policy, int W = 16,
                            int w = -1, const Scoring &s = {}) {
     const int qlen = (int)q.size(), tlen = (int)t.size();
     const int oe_del = s.o_del + s.e_del, oe_ins = s.o_ins + s.e_ins;
     if (w < 0) w = W - 1;
-    const int cols = qlen + 1;
-    std::vector<int> H((size_t)(tlen + 1) * cols, 0), E(H.size(), 0), F(H.size(), 0), Mx(H.size(), 0);
-    auto at = [cols](int i, int j) { return (size_t)i * cols + j; };
-    for (int j = 0; j <= qlen; ++j) H[at(0, j)] = std::max(0, h0 - s.o_ins - s.e_ins * j);
-    for (int i = 0; i <= tlen; ++i) H[at(i, 0)] = std::max(0, h0 - s.o_del - s.e_del * i);
-    H[at(0, 0)] = h0;
+    Diag bufs[3] = {Diag(tlen + 2), Diag(tlen + 2), Diag(tlen + 2)};
+    Diag *p2 = &bufs[0], *p1 = &bufs[1], *cur = &bufs[2];   // diagonals d-2, d-1, d
+    p2->set_boundary(0, h0, qlen, tlen, s);
+    p1->set_boundary(1, h0, qlen, tlen, s);
 
     ExtendResult r{h0, 0, 0, -1, 0, {}};
+    r.moves.reserve(std::max(0, tlen + qlen - 1));
     int lo = 1 - (W - 1) / 2;                 // centred on cell (1,1)
     bool last_dir = true;
     for (int d = 2; d <= tlen + qlen; ++d) {
+        cur->clear();
+        cur->set_boundary(d, h0, qlen, tlen, s);
         const int i_min = std::max(1, d - qlen), i_max = std::min(tlen, d - 1);
         int a, b;
         if (policy == Policy::Full) {
@@ -228,24 +252,26 @@ inline ExtendResult extend(const Seq &q, const Seq &t, int h0, Policy policy, in
         }
         if (a <= b) {
             int diag_best = 0, diag_bi = -1;
+            // (i-1, j-1) is on d-2 at index i-1; (i-1, j) and (i, j-1) are on d-1 at i-1 and i.
             for (int i = a; i <= b; ++i) {
                 const int j = d - i;
-                const int hd = H[at(i - 1, j - 1)];
+                const int hd = p2->H[i - 1];
                 const int M = hd > 0 ? hd + subst(t[i - 1], q[j - 1], s) : 0;
-                const int e = i > 1 ? std::max(E[at(i - 1, j)] - s.e_del, std::max(Mx[at(i - 1, j)] - oe_del, 0)) : 0;
-                const int f = j > 1 ? std::max(F[at(i, j - 1)] - s.e_ins, std::max(Mx[at(i, j - 1)] - oe_ins, 0)) : 0;
+                const int e = i > 1 ? std::max(p1->E[i - 1] - s.e_del, std::max(p1->M[i - 1] - oe_del, 0)) : 0;
+                const int f = j > 1 ? std::max(p1->F[i] - s.e_ins, std::max(p1->M[i] - oe_ins, 0)) : 0;
                 const int h = std::max(std::max(M, e), f);
-                Mx[at(i, j)] = M; E[at(i, j)] = e; F[at(i, j)] = f; H[at(i, j)] = h;
+                cur->M[i] = M; cur->E[i] = e; cur->F[i] = f; cur->H[i] = h;
                 if (diag_bi < 0 || h > diag_best) { diag_best = h; diag_bi = i; }  // first max, like argmax
             }
+            cur->a = a; cur->b = b;
             r.cells += b - a + 1;
             if (diag_best > r.score) { r.score = diag_best; r.max_i = diag_bi; r.max_j = d - diag_bi; }
-            if (d - a == qlen) r.gscore = std::max(r.gscore, H[at(a, qlen)]);
+            if (d - a == qlen) r.gscore = std::max(r.gscore, cur->H[a]);
         }
         if (policy == Policy::Static || policy == Policy::Adaptive) {
             auto end_score = [&](int ii) {
                 const int jj = d - ii;
-                return (ii >= 1 && ii <= tlen && jj >= 1 && jj <= qlen) ? H[at(ii, jj)] : -1;
+                return (ii >= 1 && ii <= tlen && jj >= 1 && jj <= qlen) ? cur->H[ii] : -1;
             };
             const int ht = end_score(lo), hb = end_score(lo + W - 1);
             bool down = (policy == Policy::Adaptive && ht != hb) ? (hb > ht) : !last_dir;
@@ -255,6 +281,7 @@ inline ExtendResult extend(const Seq &q, const Seq &t, int h0, Policy policy, in
             r.moves.push_back(down ? 1 : 0);
             if (down) ++lo;
         }
+        Diag *old = p2; p2 = p1; p1 = cur; cur = old;   // rotate: d-1 -> d-2, d -> d-1
     }
     return r;
 }
