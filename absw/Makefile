@@ -3,6 +3,8 @@
 #   make absw       synthesize the Smith-Waterman array in ASAP7 with Cadence Genus
 #                   (fetches the ASAP7 libraries on first run) -> flow/genus/<run>/reports
 #   make sim        RTL vs golden model (Verilator by default; SIM=vcs on CAEN)
+#                   TSV=pairs.tsv tests your own pairs (e.g. real reads) instead of synthetic ones
+#   make gatesim    the Genus netlist from `make absw` (same W/MAXLEN/CLK_PS) vs golden model
 #   make golden     C++ golden model (golden/): selftest + band-policy comparison
 #   make baseline   build GenDP simulator + BWA ksw-test, check them against each other
 #   make orfs       full RTL-to-GDSII with OpenROAD-flow-scripts (needs ORFS=<path>)
@@ -10,7 +12,8 @@
 #   make clean
 #
 # Knobs:  W=16  MAXLEN=128  CLK_PS=1000  CORNER=TT  VT=RVT   (absw)
-#         SIM=verilator|vcs  SIM_WS="8 16 32"                    (sim)
+#         SIM=verilator|vcs  SIM_WS="8 16 32"  SIM_MAXLEN=256    (sim)
+#         TSV=<pairs.tsv>  N=<max pairs>                          (sim, gatesim)
 
 W       ?= 16
 MAXLEN  ?= 128
@@ -19,6 +22,9 @@ SIM     ?= verilator
 CORNER  ?= TT
 VT      ?= RVT
 SIM_WS  ?= 8 16 32
+SIM_MAXLEN ?= 256
+TSV     ?=
+N       ?=
 
 ASAP7_SRC := flow/.asap7_src
 ASAP7_LIB := flow/.asap7_lib
@@ -32,7 +38,7 @@ LIBS = asap7sc7p5t_AO_$(VT)_$(CORNER)_nldm_211120.lib \
        asap7sc7p5t_SIMPLE_$(VT)_$(CORNER)_nldm_211120.lib \
        asap7sc7p5t_SEQ_$(VT)_$(CORNER)_nldm_220123.lib
 
-.PHONY: absw sim golden baseline orfs libs clean
+.PHONY: absw sim gatesim golden baseline orfs libs clean
 
 GOLDEN := build/golden
 $(GOLDEN): golden/golden.cpp golden/absw_golden.hpp
@@ -50,7 +56,13 @@ baseline:
 	bash run_all.sh
 
 sim:
-	SIM=$(SIM) WS="$(SIM_WS)" bash rtl/run_tests.sh
+	SIM=$(SIM) WS="$(SIM_WS)" MAXLEN=$(SIM_MAXLEN) TSV="$(TSV)" N="$(N)" bash rtl/run_tests.sh
+
+# Gate-level check of the synthesized netlist: same tests, same golden model.
+NETLIST := $(GENUS_DIR)/out/absw_array_netlist.v
+gatesim: $(ASAP7_LIB)/.done
+	@test -f $(NETLIST) || { echo "no netlist at $(NETLIST): run make absw (same W/MAXLEN/CLK_PS) first"; exit 1; }
+	SIM=$(SIM) WS=$(W) MAXLEN=$(MAXLEN) TSV="$(TSV)" N="$(N)" NETLIST=$(NETLIST) bash rtl/run_tests.sh
 
 # Sparse checkout: only the ASAP7 liberty and LEF folders of ORFS (~100 MB), no build.
 libs:
@@ -60,7 +72,8 @@ $(ASAP7_LIB)/.done:
 	rm -rf $(ASAP7_SRC) && mkdir -p $(ASAP7_LIB)
 	git clone --depth 1 --filter=blob:none --sparse \
 	    https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts.git $(ASAP7_SRC)
-	cd $(ASAP7_SRC) && git sparse-checkout set flow/platforms/asap7/lib/NLDM flow/platforms/asap7/lef
+	cd $(ASAP7_SRC) && git sparse-checkout set flow/platforms/asap7/lib/NLDM flow/platforms/asap7/lef \
+	    flow/platforms/asap7/verilog/stdcell
 	for f in $(ASAP7_SRC)/flow/platforms/asap7/lib/NLDM/asap7sc7p5t_*_nldm_*.lib*; do \
 	    case $$f in *FAKE*) continue;; esac; \
 	    case $$f in *.gz) gunzip -c $$f > $(ASAP7_LIB)/$$(basename $$f .gz);; *) cp $$f $(ASAP7_LIB)/;; esac; \

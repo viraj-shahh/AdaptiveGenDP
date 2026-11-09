@@ -1,4 +1,4 @@
-// Testbench: runs every case in a vector file (gen_vectors.py) through absw_array
+// Testbench: runs every case in a vector file (golden vectors) through absw_array
 // and checks score, gscore, max_i, max_j against the golden model, plus the cycle
 // count (W fill + tlen + qlen - 1 anti-diagonals + 1 flush).
 //
@@ -21,7 +21,12 @@ module absw_tb;
     logic signed [IW-1:0]        max_i, max_j;
     logic [31:0]                 cycles;
 
+    // Gate-level: +define+GATE_TOP=<netlist module>; W and MAXLEN must match the synthesis run.
+`ifdef GATE_TOP
+    `GATE_TOP dut (
+`else
     absw_array #(.W(W), .MAXLEN(MAXLEN)) dut (
+`endif
         .clk, .rst_n, .wr_en, .wr_sel, .wr_addr, .wr_data,
         .start, .tlen, .qlen, .h0, .adaptive,
         .busy, .done, .score, .gscore, .max_i, .max_j, .cycles

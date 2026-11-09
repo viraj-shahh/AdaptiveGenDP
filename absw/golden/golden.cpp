@@ -1,11 +1,11 @@
-// absw golden model command-line tool.  Build: make golden-bin (from absw/).
+// absw golden model command-line tool.  Build: make build/golden (from absw/).
 //
 //   golden selftest
 //   golden validate <ksw.csv> <ksw_out.txt>        port vs ksw-test, engine vs port
 //   golden compare  <pairs.tsv> [-W 8 16 32] [-n N] score loss of band policies vs full DP
 //   golden run      <pairs.tsv> <policy> [-W n]     per-pair: score gscore max_i max_j cells
 //   golden pairs    [options] --tsv F --ksw F --gendp F   synthetic read/reference pairs
-//   golden vectors  -o F [-W 16] [--maxlen 256] [-n 40] [--seed 1]   RTL test vectors
+//   golden vectors  -o F [-W 16] [--maxlen 256] [-n 40] [--seed 1] [--tsv F]   RTL test vectors
 //
 // TSV format: query<TAB>target<TAB>h0.  ksw csv: QUERY,TARGET,h0,w.
 #include "absw_golden.hpp"
@@ -218,9 +218,11 @@ int cmd_pairs(int argc, char **argv) {
 //   tlen qlen h0 adaptive score gscore max_i max_j
 //   <tlen target symbols>
 //   <qlen query symbols>
+// With --tsv, the tests are the pairs in that file (e.g. real read segments) instead of
+// the synthetic set; pairs longer than --maxlen are skipped and counted.
 int cmd_vectors(int argc, char **argv) {
-    std::string out = "vectors.txt";
-    int W = 16, maxlen = 256, nr = 40;
+    std::string out = "vectors.txt", tsv;
+    int W = 16, maxlen = 256, nr = -1;
     uint64_t seed = 1;
     for (int k = 2; k < argc; ++k) {
         std::string a = argv[k];
@@ -230,11 +232,23 @@ int cmd_vectors(int argc, char **argv) {
         else if (a == "--maxlen") maxlen = std::stoi(val());
         else if (a == "-n") nr = std::stoi(val());
         else if (a == "--seed") seed = std::stoull(val());
+        else if (a == "--tsv") tsv = val();
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     Rng rng(seed);
     struct Case { std::string t, q; int h0; };
     std::vector<Case> cs;
+    if (!tsv.empty()) {
+        int skipped = 0;
+        for (auto &p : read_tsv(tsv)) {
+            if (nr >= 0 && (int)cs.size() >= nr) break;
+            if (p.q.empty() || p.t.empty() || (int)p.q.size() > maxlen || (int)p.t.size() > maxlen) { ++skipped; continue; }
+            cs.push_back({p.t, p.q, p.h0});
+        }
+        if (skipped) std::printf("skipped %d pairs longer than maxlen %d\n", skipped, maxlen);
+        if (cs.empty()) { std::fprintf(stderr, "no usable pairs in %s\n", tsv.c_str()); return 1; }
+    } else {
+    if (nr < 0) nr = 40;
     // edge cases
     cs.push_back({"A", "A", 5});
     cs.push_back({"A", "C", 5});
@@ -268,6 +282,7 @@ int cmd_vectors(int argc, char **argv) {
         if (rng.uniform() < 0.5) ref = ref.substr(0, q);   // insertions need room in the read, not the ref
         cs.push_back({ref, read, rng.randint(10, 40)});
     }
+    }
 
     std::ofstream f(out);
     f << cs.size() * 2 << '\n';
@@ -299,7 +314,7 @@ void usage() {
         "       golden run <pairs.tsv> <full|rowband|static|adaptive> [-W n]\n"
         "       golden pairs [-n N --qlen L --tlen-extra E --sub-rate R --indel-rate R --max-indel K\n"
         "                     --del-frac F --h0 H --seed S --max-len M] [--tsv F] [--ksw F] [--gendp F]\n"
-        "       golden vectors [-o F] [-W n] [--maxlen L] [-n N] [--seed S]\n");
+        "       golden vectors [-o F] [-W n] [--maxlen L] [-n N] [--seed S] [--tsv pairs.tsv]\n");
 }
 
 }  // namespace

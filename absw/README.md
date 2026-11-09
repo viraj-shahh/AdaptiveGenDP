@@ -69,7 +69,15 @@ at PE 0 and the reference at PE W-1, and each shifts only on its own kind of mov
 - `bash absw/rtl/run_tests.sh` (or `make sim`) builds with Verilator and checks every case
   against the C++ golden model for W = 16, 8, 32: score, gscore, best-cell position, and the exact cycle count
   (W + tlen + qlen).
-- Status: 258/258 tests pass at each W. Three deliberately broken RTL variants (flipped steering
+- Status: 258/258 tests pass at each W, with sequences up to 256 bases (`make sim`), and also
+  up to 1 kb and 4 kb (`MAXLEN=1024` / `4096 bash rtl/run_tests.sh`). Scores and indices are
+  16-bit, so lengths up to ~32k fit.
+- Real data: `make sim TSV=pairs.tsv SIM_MAXLEN=2048` turns any pairs file (same format as
+  `golden compare` takes) into RTL tests. Pairs longer than `SIM_MAXLEN` are skipped and counted.
+- Gate level: `make gatesim` (same `W`/`MAXLEN`/`CLK_PS` as the `make absw` run) simulates the
+  Genus netlist with the ASAP7 cell models and runs the same tests. It was checked locally on a
+  Yosys-synthesized ASAP7 netlist (26.5k cells), with every flip-flop starting at a random value:
+  258/258 pass. Swapping 3 of its AND gates for OR gates fails the run. Three deliberately broken RTL variants (flipped steering
   compare, wrong diagonal mux, wrong gap-open penalty) each failed 52-112 of the 178 tests in an
   earlier, smaller vector set.
 - In these 256-base tests, adaptive never scores below static. It scores higher in 30/129 cases
@@ -83,7 +91,8 @@ Run from `absw/`:
 | Command | Does |
 |---|---|
 | `make absw` | Synthesizes the Smith-Waterman array in ASAP7 with Cadence Genus. Downloads the ASAP7 libraries on first run. Options: `W=16 MAXLEN=128 CLK_PS=1000 VT=RVT CORNER=TT` |
-| `make sim` | RTL vs golden model at W = 8, 16, 32. Use `SIM=vcs` on CAEN if Verilator isn't there |
+| `make sim` | RTL vs golden model at W = 8, 16, 32. Use `SIM=vcs` on CAEN if Verilator isn't there. `TSV=pairs.tsv` tests your own pairs (`SIM_MAXLEN=2048` for 1 kb reads, `N=200` to cap the count) |
+| `make gatesim` | Synthesized netlist (from `make absw`, same knobs) vs golden model. `SIM=vcs` uses the real ASAP7 cell models; Verilator swaps in simple flip-flop models |
 | `make golden` | Golden-model selftest plus the static vs adaptive comparison on long reads |
 | `make baseline` | Builds the GenDP simulator and BWA `ksw-test` and checks them against each other |
 | `make orfs ORFS=<path>` | Full RTL-to-GDSII with OpenROAD-flow-scripts, if you have it installed |
@@ -102,9 +111,12 @@ make absw
 
 ### Not yet verified
 
-- `make absw` (Genus), `SIM=vcs`, and `make orfs` haven't been run, because no Cadence, VCS, or OpenROAD
+- `make absw` (Genus), `SIM=vcs` (RTL and gate level), and `make orfs` haven't been run, because no Cadence, VCS, or OpenROAD
   is available on the Mac. Expect small fixes on the first CAEN run.
-- The library download in `make absw`, `make sim` (Verilator), `make golden`, and `make baseline` are tested.
+- The library download in `make absw`, `make sim` (Verilator, including `TSV=`), `make gatesim`
+  (Verilator, on a Yosys netlist), `make golden`, and `make baseline` are tested.
+- If Genus picks a cell the ORFS Verilog models don't have, `make gatesim` stops with a missing
+  module error; send that output over.
 - ASAP7 libraries checked: units are ps / fF / pW, and INVx1 area is 0.044 um², so these are real
   1x areas.
 - The RTL uses synchronous reset, because ASAP7's only async-reset flop is a single-size set/reset
@@ -123,7 +135,7 @@ make absw
 
 ## Next
 
-1. `make absw` on CAEN: clock, area, power.
+1. `make absw` on CAEN: clock, area, power. Then `make gatesim SIM=vcs`.
 2. Place and route to GDSII.
 3. Add real long reads from GenDP's own dataset (`gendp-datasets.tar.gz`, POA input: ONT reads)
    alongside the synthetic pairs.
